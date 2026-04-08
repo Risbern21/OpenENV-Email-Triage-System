@@ -53,10 +53,9 @@ def log_step(step, action, reward, done, error):
     )
 
 
-def log_end(task, success, steps, score, rewards):
-    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+def log_end(task, success, steps, score, reward):
     print(
-        f"[END] task={task} success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+        f"[END] task={task} steps={steps} score={score:.3f} reward={reward}",
         flush=True,
     )
     print()
@@ -108,7 +107,7 @@ async def main():
 
     env = EmailTriageEnvironment()
 
-    rewards: List[float] = []
+    reward = 0
     steps_taken = 0
 
     task_names = ["task1_classification", "task2_intent", "task3_reply"]
@@ -159,18 +158,17 @@ async def main():
                 done = True
                 error = str(e)
 
-            rewards.append(reward)
             steps_taken = step
 
             action_str = f"{action_type}:{content}"
             log_start(task_names[task_idx], BENCHMARK, MODEL_NAME)
             log_step(step, action_str, reward, done, error)
 
-            total_reward = sum(rewards)
+            total_reward = reward
             success = total_reward >= SUCCESS_THRESHOLD
 
-            score = min(max(sum(rewards), 0.0), 1.0)
-            log_end(task_names[task_idx], success, steps_taken, score, rewards)
+            score = min(max(reward, 0.0), 1.0)
+            log_end(task_names[task_idx], success, steps_taken, score, reward)
             task_idx = task_idx + 1
 
             if done:
