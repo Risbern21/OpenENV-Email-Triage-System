@@ -1,14 +1,15 @@
 import asyncio
 import os
-import textwrap
 import re
+import textwrap
 from typing import List
+
 from dotenv import load_dotenv
 from openai import OpenAI
-from environment import EmailTriageEnvironment, EmailTriageAction
+
+from environment import EmailTriageAction, EmailTriageEnvironment
 
 load_dotenv()
-
 
 
 # ===== ENV CONFIG =====
@@ -16,11 +17,10 @@ API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
-TASK_NAME = "email-triage"
 BENCHMARK = "openenv-email-triage"
 
 MAX_STEPS = 8
-TEMPERATURE = 0.1   
+TEMPERATURE = 0.1
 MAX_TOKENS = 100
 SUCCESS_THRESHOLD = 0.1
 
@@ -53,16 +53,22 @@ def log_step(step, action, reward, done, error):
     )
 
 
-def log_end(success, steps, score, rewards):
+def log_end(task, success, steps, score, rewards):
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
+    print(
+        f"[END] task={task} success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+        flush=True,
+    )
+    print()
 
 
 # ===== PROMPT BUILDER =====
 def build_prompt(obs):
-    history_text = "\n".join(
-        [f"{h['stage']} -> {h['output']}" for h in obs.history]
-    ) if obs.history else "None"
+    history_text = (
+        "\n".join([f"{h['stage']} -> {h['output']}" for h in obs.history])
+        if obs.history
+        else "None"
+    )
 
     return f"""
 Email: {obs.email_text}
@@ -82,7 +88,6 @@ action_type:<type>;content:<value>
 """
 
 
-
 def parse_action(text: str):
     try:
         match = re.search(
@@ -94,7 +99,6 @@ def parse_action(text: str):
     except:
         pass
 
-    
     return "classification", "important"
 
 
@@ -107,7 +111,8 @@ async def main():
     rewards: List[float] = []
     steps_taken = 0
 
-    log_start(TASK_NAME, BENCHMARK, MODEL_NAME)
+    task_names = ["task1_classification", "task2_intent", "task3_reply"]
+    task_idx = 0
 
     try:
         obs = env.reset()
@@ -132,8 +137,6 @@ async def main():
 
                 response_text = completion.choices[0].message.content.strip()
 
-                
-
             except Exception as e:
                 response_text = "action_type:classification;content:important"
 
@@ -143,10 +146,7 @@ async def main():
             if action_type != obs.current_stage:
                 action_type = obs.current_stage
 
-            action = EmailTriageAction(
-                action_type=action_type,
-                content=content
-            )
+            action = EmailTriageAction(action_type=action_type, content=content)
 
             # ===== STEP =====
             try:
@@ -163,22 +163,24 @@ async def main():
             steps_taken = step
 
             action_str = f"{action_type}:{content}"
+            log_start(task_names[task_idx], BENCHMARK, MODEL_NAME)
             log_step(step, action_str, reward, done, error)
+
+            total_reward = sum(rewards)
+            success = total_reward >= SUCCESS_THRESHOLD
+
+            score = min(max(sum(rewards), 0.0), 1.0)
+            log_end(task_names[task_idx], success, steps_taken, score, rewards)
+            task_idx = task_idx + 1
 
             if done:
                 break
-
-        total_reward = sum(rewards)
-        success = total_reward >= SUCCESS_THRESHOLD
 
     finally:
         try:
             env.close()
         except:
             pass
-
-        score = min(max(sum(rewards), 0.0), 1.0)
-        log_end(success, steps_taken, score, rewards)
 
 
 if __name__ == "__main__":
