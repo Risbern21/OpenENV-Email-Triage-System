@@ -6,7 +6,7 @@ app: server/app.py
 port: 7860
 
 tasks:
-  - id: task1_classification
+  - id: task_easy
     difficulty: easy
     name: "Email Classification"
     seed: 42
@@ -15,7 +15,7 @@ tasks:
       type: llm
       prompt_template: "Score the agents performance 0.0 to 1.0 for classifying the given email as spam, important, or support"
 
-  - id: task2_intent
+  - id: task_medium
     difficulty: medium
     name: "Email Intent Detection"
     seed: 42
@@ -24,7 +24,7 @@ tasks:
       type: llm
       prompt_template: "Score the agent from 0.0 to 1.0 based on its abiliity to identify the intent of the email: pricing inquiry, complaint, booking, or promotion"
 
-  - id: task3_reply
+  - id: task_hard
     difficulty: hard
     name: "Drafting Email Reply"
     seed: 42

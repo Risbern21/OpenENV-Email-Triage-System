@@ -17,7 +17,7 @@ API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
-TASKS = ["task1_easy", "task2_medium", "task3_hard"]
+TASKS = ["task_easy", "task_medium", "task_hard"]
 BENCHMARK = "openenv-email-triage"
 
 MAX_STEPS = 8
@@ -104,6 +104,8 @@ def parse_action(text: str):
 
 
 def run_task(env: EmailTriageEnvironment, client: OpenAI, task_id: str):
+    env.task_id = task_id
+
     rewards: List[float] = []
     steps_taken = 0
 
@@ -174,8 +176,8 @@ def run_task(env: EmailTriageEnvironment, client: OpenAI, task_id: str):
         except:
             pass
 
-        score = min(max(sum(rewards), 0.0), 1.0)
-        log_end(success, steps_taken, score, rewards)
+    score = min(max(sum(rewards), 0.0), 1.0)
+    log_end(success, steps_taken, score, rewards)
 
 
 # ===== MAIN =====

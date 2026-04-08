@@ -1,7 +1,9 @@
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel
 
 # These would normally go in models.py
+
 
 class EmailTriageAction(BaseModel):
     """
@@ -10,34 +12,37 @@ class EmailTriageAction(BaseModel):
     - intent → pricing / complaint / booking / etc
     - reply → generated text
     """
-    action_type: str   # "classification" | "intent" | "reply"
-    content: str       
-    metadata: Dict[str, Any] = {}
 
+    action_type: str  # "classification" | "intent" | "reply"
+    content: str
+    metadata: Dict[str, Any] = {}
 
 
 class EmailTriageObservation(BaseModel):
     """
     What the agent sees after each step
     """
+
     done: bool
     reward: float
 
     email_text: str
-    current_stage: str   # classification → intent → reply
+    current_stage: str  # classification → intent → reply
     history: List[Dict[str, str]]  # past actions
 
-    message: str   # feedback
+    message: str  # feedback
     metadata: Dict[str, Any] = {}
-
 
 
 class EmailTriageState(BaseModel):
     """
     Internal environment state
     """
+
     episode_id: Optional[str] = None
     step_count: int = 0
+
+    task_id: str
 
     email_text: str = ""
     true_classification: str = ""

@@ -11,7 +11,7 @@ _histories: Dict[str, List[Dict]] = {}
 
 
 def load_task(task_id: str):
-    randIdx = random.uniform(0, len(TASK_REGISTRY[task_id]["data_corpus"]))
+    randIdx = random.randint(0, len(TASK_REGISTRY[task_id]["data_corpus"]) - 1)
 
     return TASK_REGISTRY[task_id]["data_corpus"][randIdx]
 
@@ -19,6 +19,7 @@ def load_task(task_id: str):
 class EmailTriageEnvironment:
     def __init__(self):
         self.episode_id = None
+        self.task_id = ""
 
     def reset(self, seed=None, episode_id=None) -> EmailTriageObservation:
         global _episodes, _histories
@@ -27,15 +28,16 @@ class EmailTriageEnvironment:
             random.seed(seed)
 
         episode_id = episode_id or str(uuid.uuid4())
-        email = load_task(episode_id)
+        email = load_task(task_id=self.task_id)
 
         _episodes[episode_id] = EmailTriageState(
             episode_id=episode_id,
             step_count=0,
-            email_text=email["email"],
-            true_classification=email["classification"],
-            true_intent=email["intent"],
-            true_reply=email["reply"],
+            task_id=self.task_id,
+            email_text=email["email_text"],
+            true_classification=email["expected_classification"],
+            true_intent=email["expected_intent"],
+            true_reply=email["expected_reply"],
             current_stage="classification",
         )
         _histories[episode_id] = []
