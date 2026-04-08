@@ -1,0 +1,14 @@
+[project]
+name = "openenv-email-triage-system"
+version = "0.1.0"
+description = "Email triage environment using OpenEnv"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn",
+    "openenv-core",
+    "pydantic",
+]
+
+[project.scripts]
+server = "server.app:main"

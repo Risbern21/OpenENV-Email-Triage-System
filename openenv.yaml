@@ -1,0 +1,34 @@
+spec_version: 1
+name: email-triage-env
+type: environment
+runtime: docker
+app: server/app.py
+port: 7860
+
+tasks:
+  - id: task1_classification
+    difficulty: easy
+    name: "Email Classification"
+    seed: 42
+    max_steps: 10
+    grader:
+      type: llm
+      prompt_template: "Score the agents performance 0.0 to 1.0 for classifying the given email as spam, important, or support"
+
+  - id: task2_intent
+    difficulty: medium
+    name: "Email Intent Detection"
+    seed: 42
+    max_steps: 10
+    grader:
+      type: llm
+      prompt_template: "Score the agent from 0.0 to 1.0 based on its abiliity to identify the intent of the email: pricing inquiry, complaint, booking, or promotion"
+
+  - id: task3_reply
+    difficulty: hard
+    name: "Drafting Email Reply"
+    seed: 42
+    max_steps: 10
+    grader:
+      type: llm
+      prompt_template: "Score the agent from 0.0 to 1.0 on its abiliity to draft a reply to the email"
