@@ -3,88 +3,20 @@ import uuid
 from typing import Any, Dict, List
 
 from models import EmailTriageAction, EmailTriageObservation, EmailTriageState
+from tasks import TASK_REGISTRY
 
 #  GLOBAL episode storage (survives across requests)
 _episodes: Dict[str, EmailTriageState] = {}
 _histories: Dict[str, List[Dict]] = {}
 
 
-class EmailTriageEnvironment:
-    EMAILS = [
-        {
-            "email": "Hi, I would like to know the pricing for your premium plan.",
-            "classification": "important",
-            "intent": "pricing inquiry",
-            "reply": "Thank you for your interest. We will share pricing details shortly.",
-        },
-        {
-            "email": "My order hasn’t arrived yet. It’s been over a week.",
-            "classification": "support",
-            "intent": "complaint",
-            "reply": "We’re sorry for the delay. Our support team will resolve this soon.",
-        },
-        {
-            "email": "Can I book a demo for your product next week?",
-            "classification": "important",
-            "intent": "booking",
-            "reply": "Sure, we will schedule a demo and confirm shortly.",
-        },
-        {
-            "email": "Congratulations! You’ve won a free iPhone. Click here now!",
-            "classification": "spam",
-            "intent": "promotion",
-            "reply": "This appears to be spam. Please avoid clicking suspicious links.",
-        },
-        {
-            "email": "The app keeps crashing when I try to open it.",
-            "classification": "support",
-            "intent": "complaint",
-            "reply": "We're sorry for the issue. Our technical team will assist you shortly.",
-        },
-        {
-            "email": "Do you offer discounts for students?",
-            "classification": "important",
-            "intent": "pricing inquiry",
-            "reply": "We will share information about available discounts soon.",
-        },
-        {
-            "email": "Please schedule a meeting for project discussion.",
-            "classification": "important",
-            "intent": "booking",
-            "reply": "We will arrange a meeting and confirm the schedule shortly.",
-        },
-        {
-            "email": "Limited time offer! Get 90% off on all products!",
-            "classification": "spam",
-            "intent": "promotion",
-            "reply": "This is likely spam. Please ignore such messages.",
-        },
-        {
-            "email": "I forgot my password and cannot log in.",
-            "classification": "support",
-            "intent": "complaint",
-            "reply": "We will help you reset your password shortly.",
-        },
-        {
-            "email": "Is there a free trial available for your service?",
-            "classification": "important",
-            "intent": "pricing inquiry",
-            "reply": "Yes, we will share details about the free trial shortly.",
-        },
-        {
-            "email": "Book a slot for consultation tomorrow.",
-            "classification": "important",
-            "intent": "booking",
-            "reply": "We will confirm your consultation slot soon.",
-        },
-        {
-            "email": "Why was my payment declined? Please help.",
-            "classification": "support",
-            "intent": "complaint",
-            "reply": "We’re sorry for the inconvenience. Our team will assist you shortly.",
-        },
-    ]
+def load_task(task_id: str):
+    randIdx = random.uniform(0, len(TASK_REGISTRY[task_id]["data_corpus"]))
 
+    return TASK_REGISTRY[task_id]["data_corpus"][randIdx]
+
+
+class EmailTriageEnvironment:
     def __init__(self):
         self.episode_id = None
 
@@ -95,7 +27,7 @@ class EmailTriageEnvironment:
             random.seed(seed)
 
         episode_id = episode_id or str(uuid.uuid4())
-        email = random.choice(self.EMAILS)
+        email = load_task(episode_id)
 
         _episodes[episode_id] = EmailTriageState(
             episode_id=episode_id,
