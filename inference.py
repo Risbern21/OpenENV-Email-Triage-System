@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from environment import EmailTriageAction, EmailTriageEnvironment
+from graders.grader import grade
 
 load_dotenv()
 
@@ -179,6 +180,9 @@ def run_task(env: EmailTriageEnvironment, client: OpenAI, task_id: str):
     score = min(max(sum(rewards), 0.0), 1.0)
     log_end(success, steps_taken, score, rewards)
 
+    # grader_result = grade(env.episode_id, env.task_id)
+    # return grader_result
+
 
 # ===== MAIN =====
 async def main():
@@ -186,8 +190,14 @@ async def main():
 
     env = EmailTriageEnvironment()
 
+    # results = []
+
     for task_id in TASKS:
         run_task(env, client, task_id)
+        # results.append(result)
+
+    # for r in results:
+    # print(r)
 
 
 if __name__ == "__main__":

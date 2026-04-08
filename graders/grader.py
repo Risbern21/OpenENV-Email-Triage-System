@@ -1,11 +1,11 @@
 import math
 import random
-import numpy as np
 from typing import Callable, Dict, List
+
+import numpy as np
 
 from environment import EmailTriageEnvironment
 from models import EmailTriageAction
-
 
 # ---------------------------------------------------------------------------
 # Constants derived directly from your environment's reward structure:
@@ -17,8 +17,8 @@ from models import EmailTriageAction
 # ---------------------------------------------------------------------------
 
 VALID_CLASSIFICATIONS = ["important", "support", "spam"]
-VALID_INTENTS         = ["pricing inquiry", "complaint", "booking", "promotion"]
-RANDOM_REPLY          = "xyz"   # guaranteed to never substring-match any true reply
+VALID_INTENTS = ["pricing inquiry", "complaint", "booking", "promotion"]
+RANDOM_REPLY = "xyz"  # guaranteed to never substring-match any true reply
 
 
 def compute_analytical_ceiling(n_episodes: int) -> float:
@@ -45,8 +45,8 @@ def compute_analytical_ceiling(n_episodes: int) -> float:
 # ---------------------------------------------------------------------------
 
 _SCORE_EPSILON = 0.02
-_SCORE_MIN = _SCORE_EPSILON         # 0.02
-_SCORE_MAX = 1.0 - _SCORE_EPSILON   # 0.98
+_SCORE_MIN = _SCORE_EPSILON  # 0.02
+_SCORE_MAX = 1.0 - _SCORE_EPSILON  # 0.98
 
 
 def _safe_float(x: float) -> float:
@@ -72,6 +72,7 @@ def _clamp_score(score: float) -> float:
 # Shared normalizer — used by both grade() and RobustnessGrader
 # ---------------------------------------------------------------------------
 
+
 def normalize_score(
     cumulative_reward: float,
     reward_floor: float,
@@ -92,9 +93,11 @@ def normalize_score(
     """
     raw_range = _safe_float(reward_ceiling) - _safe_float(reward_floor)
     if raw_range < 1.0:
-        raw_range = 1.0     # guard against near-zero division
+        raw_range = 1.0  # guard against near-zero division
 
-    normalized = (_safe_float(cumulative_reward) - _safe_float(reward_floor)) / raw_range
+    normalized = (
+        _safe_float(cumulative_reward) - _safe_float(reward_floor)
+    ) / raw_range
 
     # Zero-miss bonus: reward episodes where classification was never wrong
     # Analogous to N-1 survival bonus in the reference grader
@@ -107,6 +110,7 @@ def normalize_score(
 # ---------------------------------------------------------------------------
 # Floor policy — deliberately bad, seeded for reproducibility
 # ---------------------------------------------------------------------------
+
 
 def _random_triage_policy(obs, rng: np.random.Generator) -> EmailTriageAction:
     """
@@ -126,14 +130,15 @@ def _random_triage_policy(obs, rng: np.random.Generator) -> EmailTriageAction:
     elif stage == "intent":
         content = str(rng.choice(VALID_INTENTS))
     else:
-        content = RANDOM_REPLY      # reply stage — guaranteed wrong
+        content = RANDOM_REPLY  # reply stage — guaranteed wrong
 
-    return EmailTriageAction(content=content)
+    return EmailTriageAction(action_type=stage, content=content)
 
 
 # ---------------------------------------------------------------------------
 # RobustnessGrader — mirrors the reference class exactly
 # ---------------------------------------------------------------------------
+
 
 class RobustnessGrader:
     """
@@ -149,14 +154,14 @@ class RobustnessGrader:
     """
 
     def __init__(self):
-        self.reward_floor   = None
+        self.reward_floor = None
         self.reward_ceiling = None
 
     # ------------------------------------------------------------------
     # Bound estimation
     # ------------------------------------------------------------------
 
-    def _estimate_bounds(self, n_samples: int = 10):
+    def _estimate_bounds(self, task_id: str = "task_easy", n_samples: int = 10):
         """
         Compute floor (empirical) and ceiling (analytical).
 
@@ -171,6 +176,7 @@ class RobustnessGrader:
             # Vary seed per episode so floor reflects email variety,
             # not just n_samples random actions on one fixed email.
             env = EmailTriageEnvironment()
+            env.task_id = task_id
             obs = env.reset(seed=42 + i)
             ep_reward = 0.0
             done = False
@@ -197,7 +203,7 @@ class RobustnessGrader:
         if self.reward_floor is None:
             self._estimate_bounds()
         return {
-            "reward_floor":   round(self.reward_floor, 4),
+            "reward_floor": round(self.reward_floor, 4),
             "reward_ceiling": round(self.reward_ceiling, 4),
         }
 
@@ -259,7 +265,7 @@ class RobustnessGrader:
             if classification_correct:
                 zero_miss_count += 1
 
-        avg_reward     = float(np.mean(rewards))
+        avg_reward = float(np.mean(rewards))
         zero_miss_rate = zero_miss_count / n_episodes
 
         final_score = normalize_score(
@@ -272,9 +278,9 @@ class RobustnessGrader:
         return {
             "avg_raw_reward": round(avg_reward, 4),
             "zero_miss_rate": round(zero_miss_rate, 4),
-            "reward_floor":   round(self.reward_floor, 4),
+            "reward_floor": round(self.reward_floor, 4),
             "reward_ceiling": round(reward_ceiling, 4),
-            "score":          final_score,
+            "score": final_score,
         }
 
 
@@ -283,7 +289,8 @@ class RobustnessGrader:
 # Mirrors EnvClient.grade() → GET /grader?session_id=...
 # ---------------------------------------------------------------------------
 
-def grade(episode_id: str) -> Dict:
+
+def grade(episode_id: str, task_id: str = "task_easy") -> Dict:
     """
     Grade a completed episode by episode_id.
 
@@ -306,7 +313,8 @@ def grade(episode_id: str) -> Dict:
             "score"          : float,   # in (0.02, 0.98)
         }
     """
-    from environment import _episodes, _histories   # access global episode state
+    from environment import (_episodes,  # access global episode state
+                             _histories)
 
     if episode_id not in _episodes:
         return {
@@ -314,7 +322,7 @@ def grade(episode_id: str) -> Dict:
             "score": _SCORE_MIN,
         }
 
-    state   = _episodes[episode_id]
+    state = _episodes[episode_id]
     history = _histories.get(episode_id, [])
 
     # Recompute reward from history using the exact same rules as env.step()
@@ -322,7 +330,7 @@ def grade(episode_id: str) -> Dict:
     classification_correct = False
 
     for entry in history:
-        stage  = entry["stage"]
+        stage = entry["stage"]
         output = entry["output"]
 
         if stage == "classification":
@@ -340,15 +348,15 @@ def grade(episode_id: str) -> Dict:
             if output.lower() in state.true_reply.lower():
                 total_reward += 0.4
             else:
-                total_reward += 0.2     # acceptable reply fallback
+                total_reward += 0.2  # acceptable reply fallback
 
     # Bounds: single episode scale
-    reward_ceiling = compute_analytical_ceiling(n_episodes=1)   # 1.2
+    reward_ceiling = compute_analytical_ceiling(n_episodes=1)  # 1.2
 
     # Floor: empirical estimate (10 random-policy episodes, seeded)
     # Averaged to single-episode scale by dividing by n_samples
     _grader = RobustnessGrader()
-    _grader._estimate_bounds(n_samples=10)
+    _grader._estimate_bounds(task_id, n_samples=10)
     reward_floor = _grader.reward_floor / 10.0  # rescale: floor was over 10 eps
 
     zero_miss_rate = 1.0 if classification_correct else 0.0
@@ -361,10 +369,11 @@ def grade(episode_id: str) -> Dict:
     )
 
     return {
-        "episode_id":     episode_id,
+        "episode_id": episode_id,
+        "task_id": task_id,
         "avg_raw_reward": round(total_reward, 4),
         "zero_miss_rate": round(zero_miss_rate, 4),
-        "reward_floor":   round(reward_floor, 4),
+        "reward_floor": round(reward_floor, 4),
         "reward_ceiling": round(reward_ceiling, 4),
-        "score":          score,
+        "score": score,
     }

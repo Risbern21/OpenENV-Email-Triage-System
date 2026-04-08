@@ -13,7 +13,7 @@ tasks:
     max_steps: 10
     grader:
       type: llm
-      prompt_template: "Score the agents performance 0.0 to 1.0 for classifying the given email as spam, important, or support"
+      prompt_template: "Score the agents performance 0.0 to 1.0 for performing triage on an easy level difficulty email"
 
   - id: task_medium
     difficulty: medium
@@ -22,7 +22,7 @@ tasks:
     max_steps: 10
     grader:
       type: llm
-      prompt_template: "Score the agent from 0.0 to 1.0 based on its abiliity to identify the intent of the email: pricing inquiry, complaint, booking, or promotion"
+      prompt_template: "Score the agents performance 0.0 to 1.0 for performing triage on an medium level difficulty email"
 
   - id: task_hard
     difficulty: hard
@@ -31,4 +31,4 @@ tasks:
     max_steps: 10
     grader:
       type: llm
-      prompt_template: "Score the agent from 0.0 to 1.0 on its abiliity to draft a reply to the email"
+      prompt_template: "Score the agents performance 0.0 to 1.0 for performing triage on an hard level difficulty email"
