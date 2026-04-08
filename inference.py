@@ -54,8 +54,9 @@ def log_step(step, action, reward, done, error):
 
 
 def log_end(task, success, steps, score, reward):
+    final_score = max(0.01, min(0.99, float(score)))
     print(
-        f"[END] task={task} steps={steps} score={score:.3f} reward={reward}",
+        f"[END] task={task} steps={steps} score={final_score:.2f} reward={reward}",
         flush=True,
     )
     print()
