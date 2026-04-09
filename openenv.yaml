@@ -1,34 +1,46 @@
 spec_version: 1
 name: email-triage-env
-type: environment
-runtime: docker
-app: server/app.py
+type: space
+runtime: fastapi
+app: inference:app
 port: 7860
 
 tasks:
   - id: task_easy
     difficulty: easy
-    name: "Email Classification"
-    seed: 42
-    max_steps: 10
-    grader:
-      type: llm
-      prompt_template: "Score the agents performance 0.0 to 1.0 for performing triage on an easy level difficulty email"
+    grader: grade/task_easy
 
   - id: task_medium
     difficulty: medium
-    name: "Email Intent Detection"
-    seed: 42
-    max_steps: 10
-    grader:
-      type: llm
-      prompt_template: "Score the agents performance 0.0 to 1.0 for performing triage on an medium level difficulty email"
+    grader: grade/task_medium
 
   - id: task_hard
     difficulty: hard
-    name: "Drafting Email Reply"
-    seed: 42
-    max_steps: 10
-    grader:
-      type: llm
-      prompt_template: "Score the agents performance 0.0 to 1.0 for performing triage on an hard level difficulty email"
+    grader: grade/task_hard
+  #
+  # - id: task_easy
+  #   difficulty: easy
+  #   name: "Email Classification"
+  #   seed: 42
+  #   max_steps: 10
+  #   grader:
+  #     type: llm
+  #     prompt_template: "Score the agents performance 0.0 to 1.0 for performing triage on an easy level difficulty email"
+  #
+  # - id: task_medium
+  #   difficulty: medium
+  #   name: "Email Intent Detection"
+  #   seed: 42
+  #   max_steps: 10
+  #   grader:
+  #     type: llm
+  #     prompt_template: "Score the agents performance 0.0 to 1.0 for performing triage on an medium level difficulty email"
+  #
+  # - id: task_hard
+  #   difficulty: hard
+  #   name: "Drafting Email Reply"
+  #   seed: 42
+  #   max_steps: 10
+  #   grader:
+  #     type: llm
+  #     prompt_template: "Score the agents performance 0.0 to 1.0 for performing triage on an hard level difficulty email"

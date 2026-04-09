@@ -1,379 +1,468 @@
-import math
-import random
-from typing import Callable, Dict, List
+"""
+grader.py — Email Triage Grader
 
-import numpy as np
+Adapted from the clip-labelling grader to work with EmailTriageEnvironment.
+Grades agent actions across the three sequential stages:
+  classification → intent → reply
 
-from environment import EmailTriageEnvironment
-from models import EmailTriageAction
+Reward decomposition per step
+──────────────────────────────
+  format_score    (max 0.10)  valid fields present and well-formed
+  label_score     (max 0.60)  correctness with per-(episode, stage) noise
+  reasoning_score (max 0.30)  quality of the agent's reasoning text
+
+Per-step difficulty ceiling
+────────────────────────────
+  easy   → 0.90
+  medium → 0.80
+  hard   → 0.70
+
+Noise
+──────
+Deterministic noise seeded by hash(episode_id + stage + expected_answer)
+prevents the agent from using label_score >= threshold as a binary oracle.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from dataclasses import dataclass
+from typing import Any, Union
+
+from models import EmailTriageAction, EmailTriageState
 
 # ---------------------------------------------------------------------------
-# Constants derived directly from your environment's reward structure:
-#   classification correct  → +0.3
-#   intent correct          → +0.3
-#   reply correct           → +0.4  (substring match)
-#   reply acceptable        → +0.2  (fallback, no substring match)
-#   max per episode         → 1.0   (perfect triage, all 3 stages correct)
+# Constants
 # ---------------------------------------------------------------------------
 
-VALID_CLASSIFICATIONS = ["important", "support", "spam"]
-VALID_INTENTS = ["pricing inquiry", "complaint", "booking", "promotion"]
-RANDOM_REPLY = "xyz"  # guaranteed to never substring-match any true reply
+VALID_CLASSIFICATIONS = {
+    "spam",
+    "ham",
+    "promotional",
+    "urgent",
+    "newsletter",
+    "important",
+    "support",
+}
+VALID_INTENTS = {
+    "complaint",
+    "inquiry",
+    "feedback",
+    "request",
+    "notification",
+    "phishing",
+    "advertisement",
+    "support",
+    "unsubscribe",
+    "other",
+    "pricing",
+    "booking",
+}
+
+DIFFICULTY_STEP_CEILING: dict[str, float] = {
+    "easy": 0.90,
+    "medium": 0.80,
+    "hard": 0.70,
+}
+
+NOISE_AMPLITUDE = 0.08
+
+# Snake_case tokens considered legitimate reasoning vocabulary (not hallucinations).
+VALID_REASONING_TOKENS = {
+    "subject_line",
+    "sender_domain",
+    "reply_to",
+    "call_to_action",
+    "urgency_cue",
+    "personal_greeting",
+    "unsubscribe_link",
+    "spam_trigger",
+    "html_only",
+    "plain_text",
+    "mailing_list",
+    "return_path",
+    "action_type",  # field name from EmailTriageAction
+}
+
+FEATURE_TOKEN_RE = re.compile(r"\b[a-z]+(?:_[a-z0-9]+)+\b")
+
+# Keywords the agent should reference in reasoning, by stage.
+STAGE_FEATURES: dict[str, list[str]] = {
+    "classification": [
+        "subject",
+        "sender",
+        "domain",
+        "link",
+        "attachment",
+        "greeting",
+        "urgency",
+        "promotion",
+        "unsubscribe",
+    ],
+    "intent": [
+        "tone",
+        "request",
+        "complaint",
+        "question",
+        "action",
+        "sentiment",
+        "purpose",
+        "goal",
+        "directive",
+    ],
+    "reply": [
+        "acknowledge",
+        "resolution",
+        "apology",
+        "follow",
+        "confirm",
+        "address",
+        "solution",
+        "escalate",
+        "clarif",
+        "next step",
+    ],
+}
+
+POSITIVE_WORDS = frozenset(
+    [
+        "clear",
+        "obvious",
+        "definite",
+        "strong",
+        "high",
+        "evident",
+        "explicit",
+        "confirms",
+        "indicates",
+        "matches",
+        "typical",
+    ]
+)
+NEGATIVE_WORDS = frozenset(
+    [
+        "suspicious",
+        "missing",
+        "absent",
+        "weak",
+        "unusual",
+        "inconsistent",
+        "lacks",
+        "spam",
+        "phish",
+        "mislead",
+    ]
+)
+MIXED_WORDS = frozenset(
+    [
+        "borderline",
+        "ambiguous",
+        "unclear",
+        "mixed",
+        "could be",
+        "possibly",
+        "uncertain",
+        "partial",
+        "tradeoff",
+        "conflicting",
+    ]
+)
 
 
-def compute_analytical_ceiling(n_episodes: int) -> float:
+# ---------------------------------------------------------------------------
+# Reward model
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Reward:
+    total: float
+    format_score: float
+    label_score: float
+    reasoning_score: float
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _normalize(action: Union[EmailTriageAction, dict[str, Any]]) -> dict[str, Any]:
+    """Coerce an EmailTriageAction or raw dict into a plain dict."""
+    if isinstance(action, EmailTriageAction):
+        return {
+            "action_type": action.action_type,
+            "content": action.content,
+            "reasoning": action.reasoning,
+            "confidence": action.confidence,
+        }
+    return {
+        "action_type": str(action.get("action_type", "")),
+        "content": str(action.get("content", "")).strip(),
+        "reasoning": str(action.get("reasoning", "")).strip(),
+        "confidence": float(action.get("confidence", 0.5)),
+    }
+
+
+def _label_noise(episode_id: str, stage: str, expected: str) -> float:
+    """Deterministic noise in [-NOISE_AMPLITUDE, +NOISE_AMPLITUDE]."""
+    key = f"{episode_id}::{stage}::{expected}".encode()
+    digest = hashlib.sha256(key).hexdigest()
+    frac = int(digest[:8], 16) / 0xFFFF_FFFF
+    return NOISE_AMPLITUDE * (2.0 * frac - 1.0)
+
+
+def _partial_base(difficulty: str | None) -> float:
+    d = (difficulty or "easy").lower()
+    if d == "hard":
+        return 0.15
+    if d == "medium":
+        return 0.20
+    return 0.25
+
+
+# ---------------------------------------------------------------------------
+# Format score
+# ---------------------------------------------------------------------------
+
+
+def _score_format(action: dict[str, Any], stage: str) -> float:
+    """0.10 when the action is structurally valid; 0.0 otherwise.
+
+    Checks:
+      - action_type matches the current stage
+      - content is non-empty
+      - reasoning is non-empty
+      - confidence is a float in [0.0, 1.0]
+      - content value is within the stage vocabulary (classification / intent)
     """
-    Theoretical maximum reward across n_episodes.
+    content = str(action.get("content", "")).strip()
+    reasoning = str(action.get("reasoning", "")).strip()
+    action_type = str(action.get("action_type", "")).strip()
+    confidence = action.get("confidence", -1.0)
 
-    Perfect agent: classification (+0.3) + intent (+0.3) + reply (+0.4) = 1.0
-    plus a +0.2 bonus headroom per episode (mirrors reference grader's
-    frequency-control bonus).
+    try:
+        confidence = float(confidence)
+    except (TypeError, ValueError):
+        return 0.0
 
-    ceiling = n_episodes * 1.2
+    if not content or not reasoning:
+        return 0.0
+    if not (0.0 <= confidence <= 1.0):
+        return 0.0
+    if action_type != stage:
+        return 0.0
+    if stage == "classification" and content.lower() not in VALID_CLASSIFICATIONS:
+        return 0.0
+    if stage == "intent" and content.lower() not in VALID_INTENTS:
+        return 0.0
 
-    NOTE: The +0.2 bonus is structurally inaccessible on ambiguous emails where
-    a substring reply match is unlikely. The effective ceiling on such batches
-    is closer to n_episodes * 1.0. Scores stay comparable across agents on the
-    same email batch — the ceiling just compresses the achievable range.
-    """
-    return n_episodes * 1.2
-
-
-# ---------------------------------------------------------------------------
-# Score clamping — identical to reference grader.
-# Validator requires scores strictly in the open interval (0, 1).
-# ---------------------------------------------------------------------------
-
-_SCORE_EPSILON = 0.02
-_SCORE_MIN = _SCORE_EPSILON  # 0.02
-_SCORE_MAX = 1.0 - _SCORE_EPSILON  # 0.98
-
-
-def _safe_float(x: float) -> float:
-    """Plain Python float; NaN/Inf → 0.5 (safe midpoint inside (0,1))."""
-    v = float(x)
-    return 0.5 if not math.isfinite(v) else v
-
-
-def _clamp_score(score: float) -> float:
-    """
-    Clamp to open interval (0, 1) as a plain Python float.
-    Truncates (not rounds) to 4 decimal places so downstream
-    rounding can never push the value to exactly 0.0 or 1.0.
-    """
-    score = _safe_float(score)
-    score = max(_SCORE_MIN, min(_SCORE_MAX, score))
-    score = math.floor(score * 10000) / 10000
-    score = max(_SCORE_MIN, min(_SCORE_MAX, score))
-    return score
+    return 0.10
 
 
 # ---------------------------------------------------------------------------
-# Shared normalizer — used by both grade() and RobustnessGrader
+# Label score
 # ---------------------------------------------------------------------------
 
 
-def normalize_score(
-    cumulative_reward: float,
-    reward_floor: float,
-    reward_ceiling: float,
-    zero_miss_rate: float = 1.0,
+def _score_label(
+    action: dict[str, Any],
+    stage: str,
+    state: EmailTriageState,
+    difficulty: str | None = None,
 ) -> float:
+    """Score correctness with deterministic per-(episode, stage) noise.
+
+    classification / intent
+    ───────────────────────
+      Correct → max(0.40, 0.60 + noise)
+      Wrong   → 0.00
+
+    reply
+    ─────
+      Strong match (substring either direction) → max(0.40, 0.60 + noise)
+      Partial match (shared keywords > 3 chars) → partial_base + noise * 0.5
+      No match                                  → 0.00
     """
-    Map raw cumulative reward → open interval (0, 1).
-
-    Args:
-        cumulative_reward : total reward across all evaluated episodes
-        reward_floor      : empirical worst-case (random policy, seeded RNG)
-        reward_ceiling    : analytical upper bound (perfect triage every step)
-        zero_miss_rate    : fraction of episodes where classification was correct
-                            adds up to +10% bonus (mirrors N-1 survival bonus)
-
-    Scores are clamped to [0.02, 0.98] — never exactly 0 or 1.
-    """
-    raw_range = _safe_float(reward_ceiling) - _safe_float(reward_floor)
-    if raw_range < 1.0:
-        raw_range = 1.0  # guard against near-zero division
-
-    normalized = (
-        _safe_float(cumulative_reward) - _safe_float(reward_floor)
-    ) / raw_range
-
-    # Zero-miss bonus: reward episodes where classification was never wrong
-    # Analogous to N-1 survival bonus in the reference grader
-    zero_miss_bonus = float(zero_miss_rate) * 0.1
-    score = normalized + zero_miss_bonus
-
-    return _clamp_score(score)
-
-
-# ---------------------------------------------------------------------------
-# Floor policy — deliberately bad, seeded for reproducibility
-# ---------------------------------------------------------------------------
-
-
-def _random_triage_policy(obs, rng: np.random.Generator) -> EmailTriageAction:
-    """
-    Worst-case baseline: random answers at every stage.
-
-    - classification : random pick from valid labels
-    - intent         : random pick from valid intents
-    - reply          : fixed nonsense string (never substring-matches any true reply)
-
-    Uses an explicit seeded RNG (not global random) so floor estimates are
-    identical across process lifetimes — mirrors _random_thrash_policy.
-    """
-    stage = obs.current_stage
+    content = str(action.get("content", "")).strip().lower()
+    episode_id = str(state.episode_id or "")
 
     if stage == "classification":
-        content = str(rng.choice(VALID_CLASSIFICATIONS))
+        expected = state.true_classification.strip().lower()
+        noise = _label_noise(episode_id, stage, expected)
+        return max(0.40, 0.60 + noise) if content == expected else 0.0
+
     elif stage == "intent":
-        content = str(rng.choice(VALID_INTENTS))
-    else:
-        content = RANDOM_REPLY  # reply stage — guaranteed wrong
+        expected = state.true_intent.strip().lower()
+        noise = _label_noise(episode_id, stage, expected)
+        return max(0.40, 0.60 + noise) if content == expected else 0.0
 
-    return EmailTriageAction(action_type=stage, content=content)
+    elif stage == "reply":
+        expected = state.true_reply.strip().lower()
+        noise = _label_noise(episode_id, stage, expected)
+        if content in expected or expected in content:
+            return max(0.40, 0.60 + noise)
+        pred_words = {w for w in content.split() if len(w) > 3}
+        expt_words = {w for w in expected.split() if len(w) > 3}
+        if pred_words & expt_words:
+            return max(0.0, _partial_base(difficulty) + noise * 0.5)
+        return 0.0
+
+    return 0.0
 
 
 # ---------------------------------------------------------------------------
-# RobustnessGrader — mirrors the reference class exactly
+# Reasoning score
 # ---------------------------------------------------------------------------
 
 
-class RobustnessGrader:
-    """
-    Evaluates an email triage policy using the same pipeline as the
-    reference OpenGrid RobustnessGrader.
-
-    Scoring pipeline:
-      1. Floor   — empirical: random policy, n_samples=10, seeded RNG
-                   result = mean − std (conservatively low)
-      2. Ceiling — analytical: n_episodes * 1.2
-      3. Score   — normalize(avg_reward, floor, ceiling) + zero-miss bonus (≤10%)
-      4. Clamp   — final score always in (0.02, 0.98)
-    """
-
-    def __init__(self):
-        self.reward_floor = None
-        self.reward_ceiling = None
-
-    # ------------------------------------------------------------------
-    # Bound estimation
-    # ------------------------------------------------------------------
-
-    def _estimate_bounds(self, task_id: str = "task_easy", n_samples: int = 10):
-        """
-        Compute floor (empirical) and ceiling (analytical).
-
-        Floor  = mean − std over n_samples random-policy episodes.
-                 Seeded RNG + varied env seeds → stable, reproducible.
-        Ceiling = analytical upper bound.
-        """
-        thrash_rng = np.random.default_rng(seed=12345)
-        floors: List[float] = []
-
-        for i in range(n_samples):
-            # Vary seed per episode so floor reflects email variety,
-            # not just n_samples random actions on one fixed email.
-            env = EmailTriageEnvironment()
-            env.task_id = task_id
-            obs = env.reset(seed=42 + i)
-            ep_reward = 0.0
-            done = False
-
-            while not done:
-                action = _random_triage_policy(obs, rng=thrash_rng)
-                obs = env.step(action)
-                ep_reward += obs.reward
-                done = obs.done
-
-            floors.append(ep_reward)
-
-        self.reward_floor = float(np.mean(floors) - np.std(floors))
-
-        # Ceiling: scale to n_samples episodes for a fair comparison
-        self.reward_ceiling = compute_analytical_ceiling(n_samples)
-
-        # Ensure minimum spread so normalization is meaningful
-        if self.reward_ceiling - self.reward_floor < 1.0:
-            self.reward_ceiling = self.reward_floor + 5.0
-
-    def get_bounds(self) -> Dict[str, float]:
-        """Return floor and ceiling, computing them on first call."""
-        if self.reward_floor is None:
-            self._estimate_bounds()
-        return {
-            "reward_floor": round(self.reward_floor, 4),
-            "reward_ceiling": round(self.reward_ceiling, 4),
-        }
-
-    # ------------------------------------------------------------------
-    # Policy evaluation
-    # ------------------------------------------------------------------
-
-    def evaluate_policy(
-        self,
-        policy_fn: Callable,
-        n_episodes: int = 3,
-    ) -> Dict:
-        """
-        Run policy_fn for n_episodes and return a normalized score dict.
-
-        policy_fn signature:
-            policy_fn(obs: EmailTriageObservation) -> EmailTriageAction
-
-        Returns:
-            {
-                "avg_raw_reward" : float,   # mean cumulative reward per episode
-                "zero_miss_rate" : float,   # fraction of episodes: classification correct
-                "reward_floor"   : float,
-                "reward_ceiling" : float,
-                "score"          : float,   # final score in (0.02, 0.98)
-            }
-        """
-        if self.reward_floor is None:
-            self._estimate_bounds()
-
-        # Re-compute ceiling to match the actual n_episodes being evaluated
-        reward_ceiling = compute_analytical_ceiling(n_episodes)
-        if reward_ceiling - self.reward_floor < 1.0:
-            reward_ceiling = self.reward_floor + 5.0
-
-        rewards: List[float] = []
-        zero_miss_count = 0
-
-        for ep in range(n_episodes):
-            env = EmailTriageEnvironment()
-            # Seeds are distinct from floor seeds (42+i) to avoid overlap
-            obs = env.reset(seed=100 + ep)
-            ep_reward = 0.0
-            done = False
-            classification_correct = False
-
-            while not done:
-                prev_stage = obs.current_stage
-                action = policy_fn(obs)
-                obs = env.step(action)
-                ep_reward += obs.reward
-                done = obs.done
-
-                # +0.3 is only awarded on correct classification
-                if prev_stage == "classification" and obs.reward == 0.3:
-                    classification_correct = True
-
-            rewards.append(ep_reward)
-            if classification_correct:
-                zero_miss_count += 1
-
-        avg_reward = float(np.mean(rewards))
-        zero_miss_rate = zero_miss_count / n_episodes
-
-        final_score = normalize_score(
-            cumulative_reward=avg_reward,
-            reward_floor=self.reward_floor,
-            reward_ceiling=reward_ceiling,
-            zero_miss_rate=zero_miss_rate,
+def _infer_polarity(stage: str, content: str) -> str:
+    c = content.lower()
+    if stage == "classification":
+        return (
+            "negative"
+            if c in ("spam", "promotional")
+            else "positive" if c in ("ham", "important") else "mixed"
         )
-
-        return {
-            "avg_raw_reward": round(avg_reward, 4),
-            "zero_miss_rate": round(zero_miss_rate, 4),
-            "reward_floor": round(self.reward_floor, 4),
-            "reward_ceiling": round(reward_ceiling, 4),
-            "score": final_score,
-        }
-
-
-# ---------------------------------------------------------------------------
-# grade() — called directly by the FastAPI /grader endpoint
-# Mirrors EnvClient.grade() → GET /grader?session_id=...
-# ---------------------------------------------------------------------------
+    if stage == "intent":
+        return (
+            "negative"
+            if c in ("complaint", "phishing")
+            else "mixed" if c in ("feedback", "notification") else "positive"
+        )
+    return "mixed"
 
 
-def grade(episode_id: str, task_id: str = "task_easy") -> Dict:
+def _contains_directional_cue(reasoning: str, feature: str, polarity: str) -> bool:
+    text = reasoning.lower()
+    if feature.lower() not in text:
+        return False
+    words = set(re.split(r"\W+", text))
+    if polarity == "positive":
+        return bool(POSITIVE_WORDS & words)
+    if polarity == "negative":
+        return bool(NEGATIVE_WORDS & words)
+    return bool(MIXED_WORDS & set(text.split()))
+
+
+def _score_reasoning(
+    action: dict[str, Any],
+    stage: str,
+    difficulty: str | None = None,
+) -> float:
+    """Score reasoning quality with difficulty-adjusted thresholds.
+
+    Sub-score 1 — Feature mentions (max 0.10)
+      ≥ 2 stage-relevant features → 0.10
+      1 feature                   → 0.04 (easy) | 0.03 (medium) | 0.00 (hard)
+
+    Sub-score 2 — Directional cues (max 0.10)
+      easy   : ≥ 1 match → 0.10; else >50 chars → 0.03
+      medium : ≥ 1 match required → 0.10
+      hard   : ≥ 2 matches → 0.10; 1 match → 0.03
+
+    Sub-score 3 — Hallucination + quality (max 0.10)
+      easy/medium : 0 hallucinated tokens → 0.10; 1 → 0.04
+      hard        : 0 tokens AND >50 chars → 0.10; 0 tokens only → 0.04
     """
-    Grade a completed episode by episode_id.
+    reasoning = str(action.get("reasoning", "")).strip()
+    content = str(action.get("content", "")).strip()
+    diff = (difficulty or "easy").lower()
+    lower = reasoning.lower()
+    score = 0.0
 
-    Reads cumulative reward directly from global episode state (no re-running),
-    then normalizes it to (0.02, 0.98) using the same floor/ceiling/bonus
-    pipeline as RobustnessGrader.evaluate_policy().
+    features = STAGE_FEATURES.get(stage, [])
+    polarity = _infer_polarity(stage, content)
 
-    This keeps /grader endpoint results consistent with standalone grader runs.
+    # ── Sub-score 1: Feature mentions ─────────────────────────────────────
+    mentioned = sum(1 for kw in features if kw in lower)
+    if mentioned >= 2:
+        score += 0.10
+    elif mentioned == 1:
+        score += {"hard": 0.00, "medium": 0.03}.get(diff, 0.04)
 
-    Args:
-        episode_id : the UUID from _episodes / _histories globals in environment.py
-
-    Returns:
-        {
-            "episode_id"     : str,
-            "avg_raw_reward" : float,   # total reward for this single episode
-            "zero_miss_rate" : float,   # 1.0 if classification correct, else 0.0
-            "reward_floor"   : float,
-            "reward_ceiling" : float,
-            "score"          : float,   # in (0.02, 0.98)
-        }
-    """
-    from environment import (_episodes,  # access global episode state
-                             _histories)
-
-    if episode_id not in _episodes:
-        return {
-            "error": f"Episode '{episode_id}' not found.",
-            "score": _SCORE_MIN,
-        }
-
-    state = _episodes[episode_id]
-    history = _histories.get(episode_id, [])
-
-    # Recompute reward from history using the exact same rules as env.step()
-    total_reward = 0.0
-    classification_correct = False
-
-    for entry in history:
-        stage = entry["stage"]
-        output = entry["output"]
-
-        if stage == "classification":
-            if output == state.true_classification:
-                total_reward += 0.3
-                classification_correct = True
-            # else: +0.0
-
-        elif stage == "intent":
-            if output == state.true_intent:
-                total_reward += 0.3
-            # else: +0.0
-
-        elif stage == "reply":
-            if output.lower() in state.true_reply.lower():
-                total_reward += 0.4
-            else:
-                total_reward += 0.2  # acceptable reply fallback
-
-    # Bounds: single episode scale
-    reward_ceiling = compute_analytical_ceiling(n_episodes=1)  # 1.2
-
-    # Floor: empirical estimate (10 random-policy episodes, seeded)
-    # Averaged to single-episode scale by dividing by n_samples
-    _grader = RobustnessGrader()
-    _grader._estimate_bounds(task_id, n_samples=10)
-    reward_floor = _grader.reward_floor / 10.0  # rescale: floor was over 10 eps
-
-    zero_miss_rate = 1.0 if classification_correct else 0.0
-
-    score = normalize_score(
-        cumulative_reward=total_reward,
-        reward_floor=reward_floor,
-        reward_ceiling=reward_ceiling,
-        zero_miss_rate=zero_miss_rate,
+    # ── Sub-score 2: Directional cues ─────────────────────────────────────
+    dir_matches = sum(
+        1
+        for kw in features
+        if kw in lower and _contains_directional_cue(reasoning, kw, polarity)
     )
 
-    return {
-        "episode_id": episode_id,
-        "task_id": task_id,
-        "avg_raw_reward": round(total_reward, 4),
-        "zero_miss_rate": round(zero_miss_rate, 4),
-        "reward_floor": round(reward_floor, 4),
-        "reward_ceiling": round(reward_ceiling, 4),
-        "score": score,
-    }
+    if diff == "hard":
+        score += 0.10 if dir_matches >= 2 else (0.03 if dir_matches == 1 else 0.0)
+    elif diff == "medium":
+        score += 0.10 if dir_matches >= 1 else 0.0
+    else:
+        score += 0.10 if dir_matches >= 1 else (0.03 if len(reasoning) > 50 else 0.0)
+
+    # ── Sub-score 3: Hallucination + quality ──────────────────────────────
+    hallucinated = [
+        tok
+        for tok in FEATURE_TOKEN_RE.findall(lower)
+        if tok not in VALID_REASONING_TOKENS
+    ]
+
+    if diff == "hard":
+        score += (
+            0.10
+            if (not hallucinated and len(reasoning) > 50)
+            else (0.04 if not hallucinated else 0.0)
+        )
+    else:
+        score += 0.10 if not hallucinated else (0.04 if len(hallucinated) == 1 else 0.0)
+
+    return min(max(score, 0.0), 0.30)
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def grade(
+    action: Union[EmailTriageAction, dict[str, Any]],
+    stage: str,
+    state: EmailTriageState,
+    difficulty: str | None = None,
+) -> Reward:
+    """Grade a single agent action within an EmailTriageEnvironment step.
+
+    Parameters
+    ──────────
+    action     : EmailTriageAction instance or equivalent dict
+    stage      : "classification" | "intent" | "reply"
+    state      : EmailTriageState (ground-truth lookup + noise seeding)
+    difficulty : "easy" | "medium" | "hard"  (falls back to state.difficulty)
+
+    Returns
+    ───────
+    Reward(total, format_score, label_score, reasoning_score)
+    """
+    diff = difficulty or getattr(state, "difficulty", "easy")
+    payload = _normalize(action)
+
+    format_score = _score_format(payload, stage)
+    label_score = _score_label(payload, stage, state, difficulty=diff)
+    reasoning_score = _score_reasoning(payload, stage, difficulty=diff)
+
+    raw_total = format_score + label_score + reasoning_score
+    ceiling = DIFFICULTY_STEP_CEILING.get(diff.lower(), 1.0)
+    total = min(raw_total, ceiling)
+
+    return Reward(
+        total=round(min(max(total, 0.0), 1.0), 6),
+        format_score=round(format_score, 6),
+        label_score=round(label_score, 6),
+        reasoning_score=round(reasoning_score, 6),
+    )
+
+
+def score(
+    action: Union[EmailTriageAction, dict[str, Any]],
+    stage: str,
+    state: EmailTriageState,
+    difficulty: str | None = None,
+) -> float:
+    """Convenience wrapper — returns only the scalar total reward."""
+    return float(grade(action, stage, state, difficulty=difficulty).total)
