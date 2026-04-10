@@ -4,7 +4,7 @@ import uvicorn
 from fastapi import HTTPException, Query
 from openenv.core.env_server import create_fastapi_app
 
-from models import EmailTriageAction, EmailTriageObservation
+from models import EmailTriageAction, EmailTriageObservation, TaskInfo
 from tasks import TASK_REGISTRY
 
 from .env import EmailTriageEnvironment
@@ -14,6 +14,29 @@ from .grader import (_difficulty_ceiling, _score_format, _score_label,
 app = create_fastapi_app(
     EmailTriageEnvironment, EmailTriageAction, EmailTriageObservation
 )
+
+TASK_SURFACE_DESCRIPTIONS = {
+    "task_easy": "triage easy level difficulty emails (classify,intent and reply)",
+    "task_medium": "triage medium level difficulty emails (classify,intent and reply)",
+    "task_hard": "triage hard level difficulty emails (classify,intent and reply)",
+}
+
+
+def _surface_task_description(task_id: str, fallback: str) -> str:
+    return TASK_SURFACE_DESCRIPTIONS.get(task_id, fallback)
+
+
+@app.get("/tasks", response_model=list[TaskInfo])
+def list_tasks() -> list[TaskInfo]:
+    return [
+        TaskInfo(
+            task_id=task_id,
+            difficulty=task["difficulty"],
+            description=_surface_task_description(task_id, task["description"]),
+            action_schema=EmailTriageAction.model_json_schema(),
+        )
+        for task_id, task in TASK_REGISTRY.items()
+    ]
 
 
 @app.post("/grader")

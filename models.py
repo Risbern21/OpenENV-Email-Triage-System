@@ -3,6 +3,15 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
+class TaskInfo(BaseModel):
+    """Returned by /tasks endpoint."""
+
+    task_id: str
+    difficulty: str
+    description: str
+    action_schema: dict
+
+
 class EmailTriageAction(BaseModel):
     """
     Agent performs an action depending on stage:
