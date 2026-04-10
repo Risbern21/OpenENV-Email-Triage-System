@@ -1,19 +1,28 @@
 spec_version: 1
 name: email-triage-env
-type: space
-runtime: fastapi
-app: inference:app
+type: environment
+runtime: docker
+app: server/app.py
 port: 7860
 
-# tasks:
-#   - id: task_easy
-#     difficulty: easy
-#     grader: grade/task_easy
-#
-#   - id: task_medium
-#     difficulty: medium
-#     grader: grade/task_medium
-#
-#   - id: task_hard
-#     difficulty: hard
-#     grader: grade/task_hard
+tasks:
+  - id: task_easy
+    difficulty: easy
+    name: "Email Classification"
+    seed: 42
+    max_steps: 10
+    grader: grade/task_easy
+
+  - id: task_medium
+    difficulty: medium
+    name: "Email Intent Detection"
+    seed: 42
+    max_steps: 10
+    grader: grade/task_medium
+
+  - id: task_hard
+    difficulty: hard
+    name: "Drafting Email Reply"
+    seed: 42
+    max_steps: 10
+    grader: grade/task_hard
