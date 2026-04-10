@@ -2,9 +2,10 @@ import random
 import uuid
 from typing import Any, Dict, List, Optional
 
-from graders.grader import grade
 from models import EmailTriageAction, EmailTriageObservation, EmailTriageState
 from tasks import TASK_REGISTRY
+
+from .grader import grade
 
 #  GLOBAL episode storage (survives across requests)
 _episodes: Dict[str, EmailTriageState] = {}
