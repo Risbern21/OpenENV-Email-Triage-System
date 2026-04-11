@@ -1,123 +1,130 @@
 ---
-title: OpenENV-Email-Triage-System
-emoji: ♿
-colorFrom: yellow
-colorTo: green
+title: Email Triage System
+emoji: 📧
+colorFrom: blue
+colorTo: purple
 sdk: docker
 app_file: server/app.py
 pinned: false
+tags:
+  - openenv
+  - ai-agent
+  - reinforcement-learning
+  - automation
 ---
 
-# Email Triage Environment (OpenEnv)
+# 📧 OpenEnv: Email Triage System
 
-## Overview
+[![OpenEnv Spec Compliance](https://img.shields.io/badge/OpenEnv-1.0-green.svg)](https://github.com/openenv/spec)
+[![Platform](https://img.shields.io/badge/Platform-HuggingFace%20Spaces-orange.svg)](https://huggingface.co/spaces)
 
-This project implements a real-world email triage environment using the OpenEnv framework.
+A complete, real-world OpenEnv environment for training and evaluating AI agents on the complex task of professional email triage.
 
-The agent is required to:
-1. Classify incoming emails
-2. Extract user intent
-3. Generate an appropriate reply
+## 🌟 Overview
 
----
+The **Email Triage System** simulates the workflow of a digital assistant managing a high-volume inbox. Agents must process incoming emails through a multi-stage pipeline:
+1.  **🔍 Classification**: Determine the nature of the email (Spam, Important, Support, etc.).
+2.  **🎯 Intent Detection**: Extract the specific user need (Complaint, Pricing, Booking, etc.).
+3.  **✍️ Reply Generation**: Draft a contextually accurate and professional response.
 
-## Motivation
- 
-Email triage is a practical, multi-step reasoning task that requires an agent to:
-- Understand natural language in varied email contexts
-- Make structured decisions across sequential stages
-- Generate contextually appropriate responses
- 
-This environment provides a reproducible, sandboxed benchmark for evaluating language model agents on classification, intent recognition, and reply generation — three core skills in real-world business automation.
- 
----
-
-## Tasks
-
-### 1. Classification (Easy)
-Classify the email into one of:
-- spam
-- important
-- support
-
-### 2. Intent Extraction (Medium)
-Identify the user's intent:
-- pricing inquiry
-- complaint
-- booking
-- general question
-
-### 3. Reply Generation (Hard)
-Generate a suitable response to the email.
+This environment provides a structured, reproducible benchmark for evaluating an agent's ability to maintain state, follow business logic, and generate high-quality outputs.
 
 ---
 
-## Environment Design
+## 🚀 Key Features
 
-### Action Space
-
-EmailTriageAction:
-- action_type: "classification" | "intent" | "reply"
-- content: string
-
----
-
-### Observation Space
-
-EmailTriageObservation:
-- email_text: str
-- current_stage: str
-- history: list
-- reward: float
-- done: bool
+-   **Full OpenEnv Compliance**: Implements the complete `step()`, `reset()`, and `state()` API.
+-   **Typed Pydantic Models**: Strictly enforced schemas for Observations, Actions, and Rewards.
+-   **Multi-Stage Trajectory**: Episodes involve sequential decision-making, moving from classification to drafting.
+-   **Sophisticated Graders**: Deterministic reward function with partial progress signals and reasoning quality checks.
+-   **Baseline Included**: Reproducible inference script using OpenAI-compatible APIs.
 
 ---
 
-### State
+## 📊 Task & Difficulty Levels
 
-EmailTriageState:
-- email_text
-- true_classification
-- true_intent
-- true_reply
-- current_stage
-
----
-
-### Reward System
-
-- Classification → 0.3  
-- Intent → 0.3  
-- Reply → 0.4  
-
-Partial credit is given for acceptable replies.
+| Task ID | Name | Difficulty | Description |
+| :--- | :--- | :--- | :--- |
+| `task_easy` | **Email Classification** | Easy | Simple spam vs. ham detection with clear triggers. |
+| `task_medium` | **Intent Detection** | Medium | Understanding customer issues like card activation or billing. |
+| `task_hard` | **Drafting Reply** | Hard | Generating professional emails that resolve user queries. |
 
 ---
 
-## Running the Environment
+## 🛠️ Environment Specification
 
-### 1. Create and activate a virtual environment
+### Action Space (`EmailTriageAction`)
+-   `action_type`: Current stage (`classification`, `intent`, `reply`).
+-   `content`: The agent's decision or text output.
+-   `reasoning`: String explaining the logic behind the action.
+-   `confidence`: Float [0.0 - 1.0] representing agent's certainty.
 
+### Observation Space (`EmailTriageObservation`)
+-   `email_text`: The content of the email being triaged.
+-   `current_stage`: Which stage the environment is in.
+-   `history`: Detailed log of previous actions and their fine-grained scores.
+-   `reward`: Scalar reward for the current step.
+-   `message`: Natural language feedback from the grader.
+
+---
+
+## 🏆 Reward Function
+
+The environment provides a dense reward signal decomposed into three components:
+-   **Label Correctness (60%)**: Accuracy relative to ground truth.
+-   **Reasoning Quality (30%)**: Evaluation of the `reasoning` field for keyword relevance and length.
+-   **Formatting & Metadata (10%)**: Proper usage of `action_type` and `confidence`.
+
+Difficulty-based ceilings are applied to the final score:
+-   **Easy**: max 0.90
+-   **Medium**: max 0.80
+-   **Hard**: max 0.70
+
+---
+
+## 📦 Installation & Setup
+
+### 1. Prerequisite
+Ensure you have Python 3.10+ and `docker` installed.
+
+### 2. Local Setup
 ```bash
-python3.14 -m venv <venv-name>
+# Clone the repository
+git clone https://github.com/Risbern21/OpenENV-Email-Triage-System.git
+cd OpenENV-Email-Triage-System
 
-source <venv-name>/bin/activate
+# Create a virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install -e .
 ```
 
-### 2. Install dependencies
-
+### 3. Start the Environment
 ```bash
-pip install fastapi uvicorn openenv-core
+# Run via Uvicorn
+uvicorn server.app:app --host 0.0.0.0 --port 7860
 ```
 
-### 3. Run the environment
+### 4. Running Validation
 ```bash
-uvicorn server.app:main --host 0.0.0.0 --port 7860
+# Run the built-in validator
+./validate.sh http://localhost:7860
 ```
+
 ---
-## Running inference and validation
-```bash
-python inference.py #inference
 
-./validate.sh https://risbern2121-openenv-email-triage-system.hf.space . #validate
+## 🤖 Baseline Inference
+
+To run the baseline agent against the environment:
+1. Set your `OPENAI_API_KEY` (or `HF_TOKEN`) in `.env`.
+2. Run:
+```bash
+python inference.py
 ```
+
+---
+
+## 📄 License
+MIT License. See [LICENSE](LICENSE) for details.

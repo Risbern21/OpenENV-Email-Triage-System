@@ -10,6 +10,7 @@ class TaskInfo(BaseModel):
     difficulty: str
     description: str
     action_schema: dict
+    grader: str
 
 
 class EmailTriageAction(BaseModel):

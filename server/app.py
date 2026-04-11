@@ -34,6 +34,7 @@ def list_tasks() -> list[TaskInfo]:
             difficulty=task["difficulty"],
             description=_surface_task_description(task_id, task["description"]),
             action_schema=EmailTriageAction.model_json_schema(),
+            grader=f"/grade/{task_id}",
         )
         for task_id, task in TASK_REGISTRY.items()
     ]
@@ -82,37 +83,46 @@ def _action_from_params(
 
 
 @app.get("/grade/task_easy")
+@app.post("/grade/task_easy")
 def grade_task_easy(
+    action: Optional[EmailTriageAction] = None,
     action_type: str = Query(default="classification"),
     content: str = Query(default=""),
     reasoning: str = Query(default=""),
     confidence: float = Query(default=0.5, ge=0.0, le=1.0),
 ):
-    action = _action_from_params(action_type, content, reasoning, confidence)
+    if action is None:
+        action = _action_from_params(action_type, content, reasoning, confidence)
     score = grade(action=action, task_id="task_easy")
     return {"score": score, "reward": score}
 
 
 @app.get("/grade/task_medium")
+@app.post("/grade/task_medium")
 def grade_task_medium(
+    action: Optional[EmailTriageAction] = None,
     action_type: str = Query(default="classification"),
     content: str = Query(default=""),
     reasoning: str = Query(default=""),
     confidence: float = Query(default=0.5, ge=0.0, le=1.0),
 ):
-    action = _action_from_params(action_type, content, reasoning, confidence)
+    if action is None:
+        action = _action_from_params(action_type, content, reasoning, confidence)
     score = grade(action=action, task_id="task_medium")
     return {"score": score, "reward": score}
 
 
 @app.get("/grade/task_hard")
+@app.post("/grade/task_hard")
 def grade_task_hard(
+    action: Optional[EmailTriageAction] = None,
     action_type: str = Query(default="classification"),
     content: str = Query(default=""),
     reasoning: str = Query(default=""),
     confidence: float = Query(default=0.5, ge=0.0, le=1.0),
 ):
-    action = _action_from_params(action_type, content, reasoning, confidence)
+    if action is None:
+        action = _action_from_params(action_type, content, reasoning, confidence)
     score = grade(action=action, task_id="task_hard")
     return {"score": score, "reward": score}
 

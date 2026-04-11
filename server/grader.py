@@ -49,13 +49,12 @@ def _score_label(action: EmailTriageAction, task: dict[str, Any]) -> float:
 
     The TASK_REGISTRY entry is expected to carry ground-truth keys:
       true_classification, true_intent, true_reply
-    Partial credit (0.30) is awarded when the answer is close but not exact
-    (e.g. synonym mapping you can extend below).
+    OR a 'data_corpus' list containing dictionaries with these keys.
     """
     stage_to_truth_key = {
-        "classification": "true_classification",
-        "intent": "true_intent",
-        "reply": "true_reply",
+        "classification": "expected_classification",
+        "intent": "expected_intent",
+        "reply": "expected_reply",
     }
 
     # Infer current stage from action_type
@@ -64,19 +63,29 @@ def _score_label(action: EmailTriageAction, task: dict[str, Any]) -> float:
     if not truth_key:
         return 0.0
 
-    truth = _normalize_label(task.get(truth_key, ""))
     predicted = _normalize_label(action.content)
+    
+    # Get all possible truths (from root or corpus)
+    possible_truths = []
+    if truth_key in task:
+        possible_truths.append(_normalize_label(task[truth_key]))
+    
+    if "data_corpus" in task:
+        for item in task["data_corpus"]:
+            if truth_key in item:
+                possible_truths.append(_normalize_label(item[truth_key]))
 
-    if not truth:
+    if not possible_truths:
         # No ground truth available — award partial credit
         return 0.30
 
-    if predicted == truth:
+    if predicted in possible_truths:
         return 0.60
 
-    # Partial credit: predicted is a substring of truth or vice-versa
-    if predicted and (predicted in truth or truth in predicted):
-        return 0.30
+    # Partial credit: predicted is a substring of any truth or vice-versa
+    for truth in possible_truths:
+        if predicted and (predicted in truth or truth in predicted):
+            return 0.30
 
     return 0.0
 
