@@ -194,3 +194,36 @@ def grade(action: EmailTriageAction, task_id: str) -> float:
 
     except Exception:
         return 0.0
+
+def grade_report(action: EmailTriageAction, task_id: str) -> dict[str, Any]:
+    """
+    Returns a detailed report including component scores and metadata.
+    Matches the structure expected by the OpenEnv validator for grading endpoints.
+    """
+    if task_id not in TASK_REGISTRY:
+        return {
+            "task_id": task_id,
+            "score": 0.0,
+            "error": f"Unknown task_id: {task_id}"
+        }
+
+    task = TASK_REGISTRY[task_id]
+    difficulty = str(task.get("difficulty", "easy")).lower()
+
+    label_score = _score_label(action, task)
+    reasoning_score = _score_reasoning(action)
+    format_score = _score_format(action)
+    score = grade(action=action, task_id=task_id)
+
+    return {
+        "task_id": task_id,
+        "score": score,
+        "passed": 1 if score > 0.5 else 0,
+        "total": 1,
+        "metric": "email_triage_env",
+        "label_score": round(label_score, 4),
+        "reasoning_score": round(reasoning_score, 4),
+        "format_score": round(format_score, 4),
+        "difficulty": difficulty,
+        "ceiling": _difficulty_ceiling(difficulty),
+    }

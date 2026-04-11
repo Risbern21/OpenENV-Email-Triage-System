@@ -1,7 +1,6 @@
 """
 grader.py — Email Triage Grader
 
-Adapted from the clip-labelling grader to work with EmailTriageEnvironment.
 Grades agent actions across the three sequential stages:
   classification → intent → reply
 
